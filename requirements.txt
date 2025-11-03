@@ -2,7 +2,7 @@
 fastapi==0.115.0
 uvicorn[standard]==0.32.0
 python-dotenv==1.0.1
-pydantic==2.9.2
+pydantic>=2.9.0
 
 # Authentication
 pyjwt[crypto]==2.9.0
@@ -18,11 +18,14 @@ certifi==2024.8.30
 # Streaming
 sse-starlette==2.1.3
 
-# OpenAI Agents SDK
-openai-agents-sdk>=0.1.0
+# OpenAI
+openai>=1.0.0
+
+# OpenAI Agents SDK (install from GitHub)
+git+https://github.com/openai/openai-agents-python.git
 
 # Guardrails (optional)
-guardrails-ai>=0.5.0
+# guardrails-ai>=0.5.0  # Optional, commented out for now
 
 # CORS
 python-multipart==0.0.12

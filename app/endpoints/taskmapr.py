@@ -25,6 +25,7 @@ class DOMElementSnapshot(BaseModel):
     classNames: List[str]
     role: Optional[str] = None
     ariaLabel: Optional[str] = None
+    ariaDescribedBy: Optional[str] = None
     placeholder: Optional[str] = None
     value: Optional[str] = None
     type: Optional[str] = None
@@ -46,11 +47,17 @@ class WalkthroughContext(BaseModel):
     currentStep: Dict[str, Any]
 
 
+class HighlightAction(BaseModel):
+    selector: str
+    duration: Optional[int] = None
+
+
 class Message(BaseModel):
     id: str
     role: str
     content: str
     timestamp: str
+    highlight: Optional[List[HighlightAction]] = None
 
 
 class AgentContextPackage(BaseModel):
