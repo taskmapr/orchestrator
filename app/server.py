@@ -13,14 +13,13 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from openai import AsyncOpenAI
-from openai.types.shared.reasoning import Reasoning
 
 from agents.agent import Agent
 from agents.model_settings import ModelSettings
 from agents.run import Runner, RunConfig, CallModelData, ModelInputData
 from agents.mcp import MCPServerSse, MCPServerSseParams, create_static_tool_filter
 
-from app.config import MCP_SERVER_URL, MCP_BASE_URL
+from app.config import MCP_SERVER_URL, MCP_BASE_URL, DISABLE_AUTH
 from app.auth import authenticate_supabase_user
 from app.db import engine, ensure_session_row, make_sqlalchemy_session
 from app.endpoints.taskmapr import create_taskmapr_endpoint
@@ -67,6 +66,13 @@ async def lifespan(app: FastAPI):
     print("\n" + "="*70)
     print("🚀 Agent Orchestrator Server Starting")
     print("="*70)
+    
+    # Show authentication status
+    if DISABLE_AUTH:
+        print("⚠️  AUTHENTICATION DISABLED - Development mode")
+        print("   All requests will use test user without JWT verification")
+    else:
+        print("✓ Authentication enabled")
     
     # Startup: Launch background task to connect to MCP server
     if mcp_server_available:
@@ -168,26 +174,25 @@ mcp = MCPServerSse(
 # Agent Configuration
 # ────────────────────────────────────────────────────────────────────────────────
 
+# Only include MCP servers if MCP is available and connected
+mcp_servers_list = []
+if mcp_server_available:
+    mcp_servers_list = [mcp]
+
 orchestrator_agent = Agent(
     name="Orchestrator Agent",
     instructions=(
-        "You are an Abaqus orchestration agent with access to MCP tools from abaqus-mcp-server. "
-        "Goal: Decide whether to answer a question, generate from a known steel scaffold, or "
-        "synthesise a new .inp from docs — and then do it. "
-        "Tool policy:\n"
-        "• If the user asks a question (no file creation), call answer_abaqus_question.\n"
-        "• If no scaffold matches but they want an .inp, use search_abaqus_documents, compose the file, "
-        "  and validate_abaqus_keywords.\n"
-        "Clarification policy: Ask at most one brief question if critical parameters are missing; otherwise "
-        "proceed with sensible defaults and state them.\n"
-        "Output to user: short result + citations; if a file was produced, include the filename/resource id "
-        "and a validation summary."
+        "You are a helpful AI assistant with access to web page context. "
+        "You can help users navigate web applications, answer questions, and provide guidance. "
+        "When you see DOM elements and page context, use that information to provide helpful, actionable responses. "
+        "Be concise and user-friendly."
+        + (" You have access to MCP tools for Abaqus workflows." if mcp_server_available else "")
     ),
     model="gpt-4o-mini",
-    mcp_servers=[mcp],
+    mcp_servers=mcp_servers_list,  # Empty list if MCP not available
     model_settings=ModelSettings(
         store=True,  # <-- enables memory (persisted by SQLAlchemySession)
-        reasoning=Reasoning(effort="medium", summary="auto"),
+        # Note: reasoning parameters not supported by gpt-4o-mini
     ),
 )
 

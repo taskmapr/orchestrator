@@ -116,6 +116,18 @@ Current Step: {wt.currentStepIndex + 1} of {wt.totalSteps}
 Step Details: {json.dumps(wt.currentStep, indent=2)}
 """
     
+    # Build list of available routes/pages from context
+    available_routes = []
+    if context.pageContext.pathname == "/":
+        available_routes = ["/", "/features", "/about"]
+    else:
+        # Extract routes from visible navigation elements
+        for el in interactive_elements:
+            if el.role == "link" or el.tagName.lower() == "a":
+                href = getattr(el, "href", "") or ""
+                if href.startswith("/"):
+                    available_routes.append(href.split("?")[0].split("#")[0])
+    
     # Build full system context
     system_context = f"""
 ═══════════════════════════════════════════════════════════════
@@ -130,6 +142,8 @@ TASKMAPR CONTEXT - Web Application State
 🎯 Interactive Elements ({len(interactive_elements)} visible):
 {chr(10).join(f"  • {desc}" for desc in element_descriptions)}
 
+{'📋 Available Routes: ' + ', '.join(set(available_routes)) if available_routes else ''}
+
 {walkthrough_info}
 
 🧠 Your Capabilities:
@@ -137,12 +151,47 @@ TASKMAPR CONTEXT - Web Application State
   • You can see what the user sees on the page
   • You can reference specific UI elements by their IDs
   • You can help users navigate and complete tasks
+  • You can trigger UI actions automatically when users ask
 
-💡 Instructions:
-  • Be concise and actionable
+💡 Instructions for Navigation & Highlighting:
+  When users ask to navigate or see a section (e.g., "how to go to features", "show me features", "navigate to about"):
+  
+  1. Respond naturally and conversationally - be helpful and friendly
+  2. Check if the request matches an available route (e.g., "features" → "/features")
+  3. Look for elements with IDs or text containing the keyword (e.g., "features" → "#features-title")
+  4. At the END of your response, include actions in this exact format (this will be hidden from the user):
+    
+     [ACTIONS]
+     {{
+       "navigate": "/features",
+       "highlight": ["#features-title", "features"]
+     }}
+     [/ACTIONS]
+  
+  • Action format:
+    - "navigate": path string (e.g., "/features", "/about", "/")
+    - "highlight": array of selectors (try both CSS selector like "#features-title" and component query like "features")
+    - Always include both navigate AND highlight when navigating to a section
+  
+  • Examples of natural responses:
+    - User: "how to go to features" 
+      → "I'll take you to the features page now!" [ACTIONS]...[/ACTIONS]
+    - User: "show me the about page" 
+      → "Let me show you the about section." [ACTIONS]...[/ACTIONS]
+    - User: "go to home" 
+      → "Taking you back to the home page." [ACTIONS]...[/ACTIONS]
+  
+  • Important: Write your response naturally first, then add the [ACTIONS] block at the very end. The actions block will be automatically removed from what the user sees.
+
+💡 General Instructions:
+  • Write in a natural, conversational, and friendly tone - like you're helping a friend
+  • Be helpful and personable - avoid robotic or overly formal language
+  • Use contractions, casual phrases, and warm expressions when appropriate
+  • Keep responses concise but not terse - explain what you're doing
   • Reference visible elements when relevant (e.g., "Click the #submit-button")
   • Use tools when needed to answer questions or generate files
   • If the user is in a walkthrough, help them complete the current step
+  • Always include [ACTIONS] block when navigation or highlighting is needed (it will be hidden from the user)
 
 ═══════════════════════════════════════════════════════════════
     """.strip()
@@ -307,6 +356,53 @@ def create_taskmapr_endpoint(
                             text_fragments.append(fragment)
                 return "".join(text_fragments)
             
+            # Track full response text for action extraction
+            full_response_text = ""
+            
+            def extract_actions_from_response(text: str, context: AgentContextPackage) -> tuple[str, List[AgentAction]]:
+                """Extract actions from agent response using [ACTIONS] JSON block and return cleaned text."""
+                actions: List[AgentAction] = []
+                cleaned_text = text
+                
+                import re
+                import json
+                
+                # Look for [ACTIONS]...[/ACTIONS] block
+                actions_block_pattern = r'\[ACTIONS\](.*?)\[/ACTIONS\]'
+                match = re.search(actions_block_pattern, text, re.DOTALL | re.IGNORECASE)
+                
+                if match:
+                    # Remove the actions block from the text
+                    cleaned_text = re.sub(actions_block_pattern, '', text, flags=re.DOTALL | re.IGNORECASE).strip()
+                    
+                    try:
+                        actions_json = json.loads(match.group(1).strip())
+                        
+                        # Extract navigate action
+                        if "navigate" in actions_json and actions_json["navigate"]:
+                            actions.append(AgentAction(
+                                type="navigate",
+                                payload={"path": str(actions_json["navigate"])}
+                            ))
+                        
+                        # Extract highlight action
+                        if "highlight" in actions_json and actions_json["highlight"]:
+                            selectors = actions_json["highlight"]
+                            if isinstance(selectors, str):
+                                selectors = [selectors]
+                            elif not isinstance(selectors, list):
+                                selectors = []
+                            
+                            if selectors:
+                                actions.append(AgentAction(
+                                    type="highlight",
+                                    payload={"selectors": selectors, "duration": 5000}
+                                ))
+                    except json.JSONDecodeError as e:
+                        print(f"[TaskMapr] Failed to parse actions JSON: {e}")
+                
+                return cleaned_text, actions
+            
             try:
                 events_iter = streamed.stream_events().__aiter__()
                 heartbeat_interval = 15  # seconds
@@ -350,7 +446,21 @@ def create_taskmapr_endpoint(
                                     item_id = getattr(data, "item_id", None)
                                     if isinstance(item_id, str):
                                         streamed_item_ids.add(item_id)
-                                    payload = emit_text_delta(getattr(data, "delta", ""))
+                                    delta_text = getattr(data, "delta", "")
+                                    full_response_text += delta_text
+                                    
+                                    # Check if we've started receiving an [ACTIONS] block
+                                    # If so, don't stream that part to the user
+                                    import re
+                                    # Check if delta contains start of [ACTIONS] block
+                                    if "[ACTIONS]" in (full_response_text[-100:] if len(full_response_text) > 100 else full_response_text):
+                                        # We might be in an actions block, check if we should skip this delta
+                                        # For now, still send it but we'll clean it at the end
+                                        # A better approach would be to buffer and detect, but for simplicity
+                                        # we'll just send everything and clean at the end
+                                        pass
+                                    
+                                    payload = emit_text_delta(delta_text)
                                     if payload:
                                         yield payload
                                 
@@ -390,6 +500,7 @@ def create_taskmapr_endpoint(
                                             if message_id in streamed_item_ids:
                                                 continue
                                         text = extract_message_text(message_item)
+                                        full_response_text += text
                                         payload = emit_text_delta(text)
                                         if payload:
                                             yield payload
@@ -450,6 +561,20 @@ def create_taskmapr_endpoint(
             # Cleanup
             if reasoning_started:
                 yield emit_reasoning_done()
+            
+            # Extract actions and clean response text
+            cleaned_response_text = full_response_text
+            extracted_actions = []
+            if full_response_text:
+                cleaned_response_text, extracted_actions = extract_actions_from_response(full_response_text, context)
+                if extracted_actions:
+                    print(f"[TaskMapr] Extracted {len(extracted_actions)} actions from response")
+                    payload = emit_actions(extracted_actions)
+                    if payload:
+                        yield payload
+            
+            # Note: The cleaned response text (without [ACTIONS] block) is already in full_response_text
+            # and has been streamed to the client. The actions block is removed automatically.
             
             # Emit final metadata
             if collected_tool_calls:

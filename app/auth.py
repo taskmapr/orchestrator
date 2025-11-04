@@ -7,6 +7,7 @@ from jwt import PyJWKClient
 from fastapi import HTTPException
 
 from app.config import (
+    DISABLE_AUTH,
     SUPABASE_JWT_SECRET,
     SUPABASE_JWT_AUDIENCE,
     SUPABASE_JWT_ALGORITHMS,
@@ -104,9 +105,19 @@ def authenticate_supabase_user(
     """
     Authenticate and decode Supabase JWT token.
     
+    If DISABLE_AUTH is set, bypasses authentication and returns a test user.
+    
     Returns:
         SimpleNamespace with token, user_id, and claims
     """
+    # Bypass authentication if DISABLE_AUTH is enabled
+    if DISABLE_AUTH:
+        return SimpleNamespace(
+            token="test-token",
+            user_id="test-user-dev",
+            claims={"sub": "test-user-dev", "role": "authenticated"}
+        )
+    
     token = _resolve_bearer_token(authorization_header, access_token=access_token)
     payload = _decode_supabase_jwt(token)
 
