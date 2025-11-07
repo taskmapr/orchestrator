@@ -65,8 +65,6 @@ orchestrator/
 │   ├── db.py               # Database setup
 │   └── endpoints/
 │       ├── __init__.py
-│       ├── chat.py         # Legacy chat endpoint
-│       ├── stream.py       # Legacy stream endpoint
 │       └── taskmapr.py     # TaskMapr orchestrator endpoint
 ├── requirements.txt
 ├── .env.example
