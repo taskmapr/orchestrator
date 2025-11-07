@@ -218,7 +218,7 @@ curl http://localhost:8000/health
 
 ## License
 
-MIT License - see LICENSE file for details.
+TaskMapr Community License – see `LICENSE` for full terms. Personal, educational, non-profit, and early-stage commercial use (under $2M funding and revenue) is permitted; larger organizations must obtain a commercial license from TaskMapr.
 
 ## Links
 
