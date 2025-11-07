@@ -23,6 +23,11 @@ from app.config import MCP_SERVER_URL, MCP_BASE_URL, DISABLE_AUTH
 from app.auth import authenticate_supabase_user
 from app.db import engine, ensure_session_row, make_sqlalchemy_session
 from app.endpoints.taskmapr import create_taskmapr_endpoint
+from app.tools import (
+    list_knowledge_collections,
+    search_knowledge,
+    read_knowledge_document,
+)
 
 
 # ────────────────────────────────────────────────────────────────────────────────
@@ -145,29 +150,32 @@ mcp_params = MCPServerSseParams(
     url=MCP_SERVER_URL,
 )
 
-# Create static tool filter for allowed tools
-tool_filter = create_static_tool_filter(
-    allowed_tool_names=[
-        "answer_abaqus_question",
-        "search_abaqus_documents",
-        "list_steel_scaffolds",
-        "download_supabase_scaffold",
-        "scaffold_lipped_cee_column",
-        "prepare_rescale_job",
-        "submit_rescale_job",
-        "run_rescale_generate_input",
-        "handoff_to_expert",
-        "get_manual_task_status",
-        "submit_execution_plan",
-        "validate_abaqus_keywords",
-    ]
-)
+# Initialize MCP server only if available
+mcp = None
+if mcp_server_available:
+    # Create static tool filter for allowed tools
+    tool_filter = create_static_tool_filter(
+        allowed_tool_names=[
+            "answer_abaqus_question",
+            "search_abaqus_documents",
+            "list_steel_scaffolds",
+            "download_supabase_scaffold",
+            "scaffold_lipped_cee_column",
+            "prepare_rescale_job",
+            "submit_rescale_job",
+            "run_rescale_generate_input",
+            "handoff_to_expert",
+            "get_manual_task_status",
+            "submit_execution_plan",
+            "validate_abaqus_keywords",
+        ]
+    )
 
-mcp = MCPServerSse(
-    params=mcp_params,
-    name="Abaqus_MCP_Server",
-    tool_filter=tool_filter,
-)
+    mcp = MCPServerSse(
+        params=mcp_params,
+        name="Abaqus_MCP_Server",
+        tool_filter=tool_filter,
+    )
 
 
 # ────────────────────────────────────────────────────────────────────────────────
@@ -175,8 +183,8 @@ mcp = MCPServerSse(
 # ────────────────────────────────────────────────────────────────────────────────
 
 # Only include MCP servers if MCP is available and connected
-mcp_servers_list = []
-if mcp_server_available:
+mcp_servers_list: list = []
+if mcp_server_available and mcp is not None:
     mcp_servers_list = [mcp]
 
 orchestrator_agent = Agent(
@@ -185,14 +193,24 @@ orchestrator_agent = Agent(
         "You are a helpful AI assistant with access to web page context. "
         "You can help users navigate web applications, answer questions, and provide guidance. "
         "When you see DOM elements and page context, use that information to provide helpful, actionable responses. "
-        "Be concise and user-friendly."
+        "Be concise and user-friendly.\n\n"
+        "CRITICAL: When users request navigation, highlighting, or to see/show something, you MUST include an [ACTIONS] block at the end of your response. "
+        "Format: [ACTIONS]{\"navigate\": \"/path\", \"highlight\": [\"selector\"]}[/ACTIONS] "
+        "The [ACTIONS] block will be automatically removed from the user's view but will execute the actions."
         + (" You have access to MCP tools for Abaqus workflows." if mcp_server_available else "")
     ),
-    model="gpt-4o-mini",
+    tools=[
+        list_knowledge_collections,
+        search_knowledge,
+        read_knowledge_document,
+    ],
+    model="gpt-5-mini",
     mcp_servers=mcp_servers_list,  # Empty list if MCP not available
     model_settings=ModelSettings(
         store=True,  # <-- enables memory (persisted by SQLAlchemySession)
-        # Note: reasoning parameters not supported by gpt-4o-mini
+        # GPT-5-mini supports reasoning parameters if needed
+        # verbosity="high",  # Optional: for more detailed reasoning
+        # reasoning_effort="medium",  # Optional: balance between accuracy and speed
     ),
 )
 

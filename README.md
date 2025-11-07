@@ -17,6 +17,7 @@ FastAPI server that powers TaskMapr's AI capabilities with OpenAI Agents SDK, Su
 - Supabase integration for persistent conversation history
 - MCP tools for extensible domain-specific workflows
 - JWT authentication via Supabase token verification
+- Built-in knowledge tools for curated project briefs
 
 ## Architecture
 
@@ -69,6 +70,7 @@ orchestrator/
 │       └── taskmapr.py     # TaskMapr orchestrator endpoint
 ├── requirements.txt
 ├── .env.example
+├── knowledge/             # Markdown knowledge packs consumed by the agent
 └── README.md
 ```
 

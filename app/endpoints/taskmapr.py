@@ -89,11 +89,17 @@ def build_taskmapr_system_context(context: AgentContextPackage) -> str:
     """
     # Extract interactive elements
     interactive_elements = [
-        el for el in context.domElements 
+        el for el in context.domElements
         if el.isInteractive
     ]
-    
-    # Build element descriptions
+
+    # Extract ALL elements with IDs (for highlighting and reading text)
+    all_elements_with_ids = [
+        el for el in context.domElements
+        if el.id and el.id.strip() and el.id != "root"
+    ]
+
+    # Build element descriptions for interactive elements
     element_descriptions = []
     for el in interactive_elements[:20]:  # Limit to top 20 to avoid token overload
         desc_parts = [f"#{el.id}" if el.id else el.tagName]
@@ -105,6 +111,39 @@ def build_taskmapr_system_context(context: AgentContextPackage) -> str:
         if el.role:
             desc_parts.append(f"({el.role})")
         element_descriptions.append(" ".join(desc_parts))
+
+    # Build lists for quick lookup
+    available_ids = [el.id for el in all_elements_with_ids[:30]]
+    ids_with_keywords: Dict[str, List[str]] = {}
+    text_previews: Dict[str, str] = {}
+    for el in all_elements_with_ids[:40]:
+        text = (el.textContent or "").strip()
+        if text and el.id:
+            text_previews[el.id] = text[:200].replace("\n", " ")
+
+        text_lower = text.lower()
+        id_lower = el.id.lower() if el.id else ""
+        # Check for common keywords including textual sections
+        for keyword in [
+            "comment",
+            "post",
+            "tag",
+            "user",
+            "search",
+            "create",
+            "export",
+            "filter",
+            "title",
+            "body",
+            "summary",
+            "misc",
+        ]:
+            if keyword in id_lower or keyword in text_lower:
+                if keyword not in ids_with_keywords:
+                    ids_with_keywords[keyword] = []
+                selector = f"#{el.id}"
+                if selector not in ids_with_keywords[keyword]:
+                    ids_with_keywords[keyword].append(selector)
     
     # Build walkthrough context if active
     walkthrough_info = ""
@@ -142,7 +181,13 @@ TASKMAPR CONTEXT - Web Application State
 🎯 Interactive Elements ({len(interactive_elements)} visible):
 {chr(10).join(f"  • {desc}" for desc in element_descriptions)}
 
-{'📋 Available Routes: ' + ', '.join(set(available_routes)) if available_routes else ''}
+{'🔍 Available Element IDs for Highlighting: ' + ', '.join(available_ids[:15]) + ('...' if len(available_ids) > 15 else '') if available_ids else ''}
+
+{'🎯 Quick Selectors by Keyword: ' + ', '.join([f'{k}: {", ".join(v[:3])}' for k, v in ids_with_keywords.items()]) if ids_with_keywords else ''}
+
+{'📝 Text Previews: ' + '\n'.join([f"  • #{el_id}: {preview}" for el_id, preview in list(text_previews.items())[:5]]) if text_previews else ''}
+
+{'📋 Available Routes: ' + ', '.join(set(available_routes)) if available_routes else '📋 React Admin Routes: /posts, /comments, /tags, /users, /'}
 
 {walkthrough_info}
 
@@ -153,35 +198,66 @@ TASKMAPR CONTEXT - Web Application State
   • You can help users navigate and complete tasks
   • You can trigger UI actions automatically when users ask
 
-💡 Instructions for Navigation & Highlighting:
-  When users ask to navigate or see a section (e.g., "how to go to features", "show me features", "navigate to about"):
+💡 CRITICAL: Navigation & Highlighting Instructions:
   
-  1. Respond naturally and conversationally - be helpful and friendly
-  2. Check if the request matches an available route (e.g., "features" → "/features")
-  3. Look for elements with IDs or text containing the keyword (e.g., "features" → "#features-title")
-  4. At the END of your response, include actions in this exact format (this will be hidden from the user):
-    
-     [ACTIONS]
-     {{
-       "navigate": "/features",
-       "highlight": ["#features-title", "features"]
-     }}
-     [/ACTIONS]
+  When users request navigation, highlighting, or to see a section, you MUST:
+  1. Respond naturally and conversationally
+  2. IMMEDIATELY take action - don't just describe what you would do, actually do it
+  3. ALWAYS include an [ACTIONS] block at the END of your response (this is hidden from users)
   
-  • Action format:
-    - "navigate": path string (e.g., "/features", "/about", "/")
-    - "highlight": array of selectors (try both CSS selector like "#features-title" and component query like "features")
-    - Always include both navigate AND highlight when navigating to a section
+  Action Format (REQUIRED for navigation/highlighting):
+  [ACTIONS]
+  {{
+    "navigate": "/path",
+    "highlight": ["selector1", "selector2"]
+  }}
+  [/ACTIONS]
   
-  • Examples of natural responses:
-    - User: "how to go to features" 
-      → "I'll take you to the features page now!" [ACTIONS]...[/ACTIONS]
-    - User: "show me the about page" 
-      → "Let me show you the about section." [ACTIONS]...[/ACTIONS]
-    - User: "go to home" 
-      → "Taking you back to the home page." [ACTIONS]...[/ACTIONS]
+  Navigation Rules (React Admin):
+  • "tags" → navigate to "/tags" AND highlight element with "tags" in ID or text
+  • "comments" → navigate to "/comments" AND highlight element with "comments" in ID or text  
+  • "posts" → navigate to "/posts" AND highlight element with "posts" in ID or text
+  • "users" → navigate to "/users" AND highlight element with "users" in ID or text
+  • "search" → highlight the search input field (look for input with placeholder "Search")
+  • Look at the "Available Element IDs" and "Quick Selectors by Keyword" lists above to find matching selectors
+  • IMPORTANT: If user is on a different page (e.g., /posts) and asks for "comments", you MUST navigate to /comments first
   
-  • Important: Write your response naturally first, then add the [ACTIONS] block at the very end. The actions block will be automatically removed from what the user sees.
+  Highlighting Rules:
+  • Use CSS selectors: "#element-id", ".class-name", "tag-name"
+  • Use component queries: text content like "comments", "tags", "features"
+  • Try multiple selectors: ["#comments", "comments", ".comment-section"]
+  • When user says "highlight X", immediately highlight it - don't ask, just do it
+  • When user asks to READ, COPY, or TELL what the page says (e.g., "what does it say", "copy text", "read this"), locate the relevant element (e.g., #react-admin-title, #main-content), quote the text back verbatim, and optionally highlight afterwards. Use the Text Previews above to find the right element quickly.
+  
+  EXAMPLES (you MUST follow this format EXACTLY):
+  
+  User: "highlight Comments"
+  Your response MUST be: "I'll highlight the comments section for you!" [ACTIONS]{{"highlight": ["#comments", "comments", ".comment-section"]}}[/ACTIONS]
+  
+  User: "tags"
+  Your response MUST be: "Let me show you the tags section." [ACTIONS]{{"navigate": "/tags", "highlight": ["#tags", "tags"]}}[/ACTIONS]
+  
+  User: "go to posts"
+  Your response MUST be: "I'll take you to the posts page!" [ACTIONS]{{"navigate": "/posts", "highlight": ["#posts", "posts"]}}[/ACTIONS]
+  
+  User: "comments pls highlight"
+  If on /posts page: Your response MUST be: "I'll take you to the comments page!" [ACTIONS]{{"navigate": "/comments", "highlight": ["comments"]}}[/ACTIONS]
+  If on /comments page: Your response MUST be: "I'll highlight the comments section for you!" [ACTIONS]{{"highlight": ["comments", "comment"]}}[/ACTIONS]
+  
+  User: "highlight comments" (when on /posts page)
+  Your response MUST be: "I'll navigate to the comments page and highlight it for you!" [ACTIONS]{{"navigate": "/comments", "highlight": ["comments"]}}[/ACTIONS]
+  
+  User: "locate pls"
+  Your response MUST be: "Let me locate that for you!" [ACTIONS]{{"highlight": ["#search", "search", "input"]}}[/ACTIONS]
+
+  User: "tell me here what it says"
+  Your response MUST be: "Here's what I see: \"<quote the visible text from the appropriate element>\"". After quoting, you MAY add [ACTIONS]{{"highlight": ["#main-content"]}}[/ACTIONS] if highlighting helps.
+  
+  IMPORTANT: 
+  - The [ACTIONS] block is AUTOMATICALLY REMOVED from what users see
+  - If user asks for navigation/highlighting, you MUST include [ACTIONS] - no exceptions
+  - Take action immediately, don't just describe - actually navigate and highlight
+  - Match user requests to available routes and elements from the context above
 
 💡 General Instructions:
   • Write in a natural, conversational, and friendly tone - like you're helping a friend
@@ -191,7 +267,14 @@ TASKMAPR CONTEXT - Web Application State
   • Reference visible elements when relevant (e.g., "Click the #submit-button")
   • Use tools when needed to answer questions or generate files
   • If the user is in a walkthrough, help them complete the current step
-  • Always include [ACTIONS] block when navigation or highlighting is needed (it will be hidden from the user)
+  
+  ⚠️ CRITICAL ACTION RULES:
+  • When user asks to "highlight", "show", "go to", "navigate to", or mentions a section name (tags, comments, posts, users, etc.)
+  • You MUST include an [ACTIONS] block with navigate and/or highlight
+  • Don't just describe - actually perform the action
+  • Look at the Interactive Elements list above to find matching selectors
+  • React Admin routes: /posts, /comments, /tags, /users, /, etc.
+  • If user says one word like "tags" or "comments", they want to see/highlight that section
 
 ═══════════════════════════════════════════════════════════════
     """.strip()
@@ -277,7 +360,7 @@ def create_taskmapr_endpoint(
         
         # Combine system context + history + current prompt
         # The prompt needs to be injected with the system context
-        enhanced_prompt = f"{system_context}\n\n{context.prompt}"
+        enhanced_prompt = f"{system_context}\n\nUser request: {context.prompt}\n\nRemember: If the user asks to navigate, highlight, or show something, you MUST include an [ACTIONS] block at the end of your response!"
         
         # Initialize streaming
         try:
@@ -367,16 +450,21 @@ def create_taskmapr_endpoint(
                 import re
                 import json
                 
-                # Look for [ACTIONS]...[/ACTIONS] block
+                # Look for [ACTIONS]...[/ACTIONS] block (case-insensitive, multiline)
                 actions_block_pattern = r'\[ACTIONS\](.*?)\[/ACTIONS\]'
                 match = re.search(actions_block_pattern, text, re.DOTALL | re.IGNORECASE)
                 
                 if match:
+                    print(f"[TaskMapr] Found [ACTIONS] block in response")
+                    actions_content = match.group(1).strip()
+                    print(f"[TaskMapr] Actions content: {actions_content[:200]}")
+                    
                     # Remove the actions block from the text
                     cleaned_text = re.sub(actions_block_pattern, '', text, flags=re.DOTALL | re.IGNORECASE).strip()
                     
                     try:
-                        actions_json = json.loads(match.group(1).strip())
+                        actions_json = json.loads(actions_content)
+                        print(f"[TaskMapr] Parsed actions JSON: {actions_json}")
                         
                         # Extract navigate action
                         if "navigate" in actions_json and actions_json["navigate"]:
@@ -384,6 +472,7 @@ def create_taskmapr_endpoint(
                                 type="navigate",
                                 payload={"path": str(actions_json["navigate"])}
                             ))
+                            print(f"[TaskMapr] Added navigate action: {actions_json['navigate']}")
                         
                         # Extract highlight action
                         if "highlight" in actions_json and actions_json["highlight"]:
@@ -398,8 +487,13 @@ def create_taskmapr_endpoint(
                                     type="highlight",
                                     payload={"selectors": selectors, "duration": 5000}
                                 ))
+                                print(f"[TaskMapr] Added highlight action with selectors: {selectors}")
                     except json.JSONDecodeError as e:
                         print(f"[TaskMapr] Failed to parse actions JSON: {e}")
+                        print(f"[TaskMapr] Raw actions content was: {actions_content}")
+                else:
+                    print(f"[TaskMapr] No [ACTIONS] block found in response")
+                    print(f"[TaskMapr] Response text (last 500 chars): {text[-500:]}")
                 
                 return cleaned_text, actions
             
